@@ -13,9 +13,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/unixsuperhero/matomeru/internal/store"
-	"github.com/unixsuperhero/matomeru/internal/work"
 )
 
 // tool is a Tool over a temp home: git runs with a fixed identity and no
@@ -35,6 +32,9 @@ func tool(t *testing.T) (*Tool, *bytes.Buffer, *[][]string) {
 		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
 		"O_PROJ_HUB=",
+		"O_PROJ_MANIFEST=",
+		"O_PROJ_MTM=",
+		"O_PROJ_MTM_ARGS=",
 		// git's directory and the system dirs only: a real o-inventory
 		// (~/bin) never runs from a test.
 		"PATH="+testPath(t),
@@ -75,7 +75,7 @@ func TestNewInstallsInventoryHook(t *testing.T) {
 	}
 	setEnv(tl, "PATH", bin+string(filepath.ListSeparator)+testPath(t))
 	root := filepath.Join(tl.Home, "proj")
-	if err := tl.Main([]string{"-data", filepath.Join(tl.Home, "mtm.db"), "new", "demo", "--root", root}); err != nil {
+	if err := tl.Main([]string{"new", "demo", "--root", root}); err != nil {
 		t.Fatal(err, out)
 	}
 	dir := filepath.Join(root, "demo")
@@ -87,7 +87,7 @@ func TestNewInstallsInventoryHook(t *testing.T) {
 		t.Fatalf("argv %q, want %q", got, want)
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if n := len(lines); n < 2 || lines[n-2] != "hook: installed" || lines[n-1] != "cd "+dir {
+	if n := len(lines); n < 3 || lines[n-3] != "hook: installed" || lines[n-2] != "mtm: skipped (mtm not on PATH)" || lines[n-1] != "cd "+dir {
 		t.Fatalf("tail %q", lines)
 	}
 }
@@ -95,10 +95,10 @@ func TestNewInstallsInventoryHook(t *testing.T) {
 func TestNewSkipsHookWithoutInventory(t *testing.T) {
 	tl, out, _ := tool(t)
 	root := filepath.Join(tl.Home, "proj")
-	if err := tl.Main([]string{"-data", filepath.Join(tl.Home, "mtm.db"), "new", "demo", "--root", root}); err != nil {
+	if err := tl.Main([]string{"new", "demo", "--root", root}); err != nil {
 		t.Fatal(err, out)
 	}
-	if !strings.Contains(out.String(), "hook: skipped (o-inventory not on PATH)\ncd ") {
+	if !strings.Contains(out.String(), "hook: skipped (o-inventory not on PATH)\nmtm: skipped (mtm not on PATH)\ncd ") {
 		t.Fatalf("out %q", out)
 	}
 }
@@ -120,8 +120,7 @@ func lastLine(s string) string {
 func TestNewCreatesVerifiesCommitsRegisters(t *testing.T) {
 	tl, out, _ := tool(t)
 	root := filepath.Join(tl.Home, "proj")
-	data := filepath.Join(tl.Home, "mtm.db")
-	if err := tl.Main([]string{"-data", data, "new", "demo", "--root", root}); err != nil {
+	if err := tl.Main([]string{"new", "demo", "--root", root}); err != nil {
 		t.Fatal(err, out)
 	}
 	dir := filepath.Join(root, "demo")
@@ -143,32 +142,26 @@ func TestNewCreatesVerifiesCommitsRegisters(t *testing.T) {
 		t.Fatalf("last line %q", got)
 	}
 
-	db, err := store.Open(data)
+	entries, err := tl.Manifest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	w, err := work.Open(db)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ps, err := w.Projects()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ps) != 1 || ps[0].Name != "demo" || ps[0].Status != "open" || ps[0].Created == 0 ||
-		len(ps[0].Trees) != 1 || ps[0].Trees[0].Path != dir || ps[0].Trees[0].Kind != "dir" {
-		t.Fatalf("projects %+v", ps)
+	if len(entries) != 1 || entries[0] != (Entry{Name: "demo", Path: "~/proj/demo", Branch: entries[0].Branch, Origin: OriginNew}) || entries[0].Branch == "" {
+		t.Fatalf("manifest %+v", entries)
 	}
 }
 
-func TestNewDefaultDataIsXDG(t *testing.T) {
+func TestNewDefaultManifestIsHubReposJSON(t *testing.T) {
 	tl, out, _ := tool(t)
 	if err := tl.Main([]string{"new", "x", "--root", filepath.Join(tl.Home, "proj")}); err != nil {
 		t.Fatal(err, out)
 	}
-	if _, err := os.Stat(filepath.Join(tl.Home, "data", "matomeru", "mtm.db")); err != nil {
+	if _, err := os.Stat(filepath.Join(tl.Home, "hub", "repos.json")); err != nil {
 		t.Fatal(err)
+	}
+	setEnv(tl, "O_PROJ_MANIFEST", "~/elsewhere.json")
+	if got := tl.ManifestPath(); got != filepath.Join(tl.Home, "elsewhere.json") {
+		t.Fatalf("manifest path %s", got)
 	}
 }
 
@@ -291,25 +284,24 @@ func TestNewAbortsWhenToplevelIsAParent(t *testing.T) {
 
 func TestList(t *testing.T) {
 	tl, out, _ := tool(t)
-	data := filepath.Join(tl.Home, "mtm.db")
 	root := filepath.Join(tl.Home, "proj")
-	if err := tl.Main([]string{"new", "listed", "--root", root, "-data", data}); err != nil {
+	if err := tl.Main([]string{"new", "listed", "--root", root}); err != nil {
 		t.Fatal(err, out)
 	}
 	out.Reset()
-	if err := tl.Main([]string{"list", "-data", data}); err != nil {
+	if err := tl.Main([]string{"list"}); err != nil {
 		t.Fatal(err)
 	}
-	var rows []struct {
-		Name   string      `json:"name"`
-		Trees  []work.Tree `json:"trees"`
-		Origin string      `json:"origin"`
-	}
+	var rows []Row
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatal(err, out)
 	}
-	if len(rows) != 1 || rows[0].Name != "listed" || rows[0].Origin != Origin || len(rows[0].Trees) != 1 || rows[0].Trees[0].Path != filepath.Join(root, "listed") {
+	if len(rows) != 1 || rows[0].Name != "listed" || rows[0].Origin != OriginNew || rows[0].Path != "~/proj/listed" || rows[0].Dir != filepath.Join(root, "listed") {
 		t.Fatalf("rows %+v", rows)
+	}
+	out.Reset()
+	if err := tl.Main([]string{"list", "--table"}); err != nil || !strings.Contains(out.String(), "listed  ~/proj/listed") {
+		t.Fatalf("table %q %v", out, err)
 	}
 }
 
@@ -573,7 +565,7 @@ func TestCatalogDescribesProjectNoun(t *testing.T) {
 			verbs[v.Name] = v.Kind + "/" + v.Rows
 		}
 	}
-	want := map[string]string{"list": "application/project", "new": "application/", "check": "application/", "templates": "application/", "open": "application/", "link": "application/", "unlink": "application/"}
+	want := map[string]string{"list": "application/project", "new": "application/", "adopt": "application/", "check": "application/", "templates": "application/", "open": "application/", "link": "application/", "unlink": "application/", "sync": "application/", "status": "application/"}
 	if !maps.Equal(verbs, want) {
 		t.Fatalf("project verbs %v, want %v", verbs, want)
 	}
@@ -581,13 +573,12 @@ func TestCatalogDescribesProjectNoun(t *testing.T) {
 
 func TestProjectShellNewListOpen(t *testing.T) {
 	tl, out, _ := tool(t)
-	data := filepath.Join(tl.Home, "mtm.db")
 	root := filepath.Join(tl.Home, "proj")
-	if err := tl.Main([]string{"-data", data, "project", "new", "shelled", "--root", root, "--license", "none"}); err != nil {
+	if err := tl.Main([]string{"project", "new", "shelled", "--root", root, "--license", "none"}); err != nil {
 		t.Fatal(err, out)
 	}
 	dir := filepath.Join(root, "shelled")
-	for _, line := range []string{"git init: " + dir, "commit: ", "register: project shelled", "cd " + dir, `"dir": "` + dir + `"`} {
+	for _, line := range []string{"git init: " + dir, "commit: ", "manifest: shelled -> ~/proj/shelled", "cd " + dir, `"dir": "` + dir + `"`} {
 		if !strings.Contains(out.String(), line) {
 			t.Fatalf("missing %q in %q", line, out)
 		}
@@ -597,32 +588,26 @@ func TestProjectShellNewListOpen(t *testing.T) {
 	}
 
 	out.Reset()
-	if err := tl.Main([]string{"-data", data, "project", "list", "--json", "{}"}); err != nil {
+	if err := tl.Main([]string{"project", "list", "--json", "{}"}); err != nil {
 		t.Fatal(err, out)
 	}
-	var rows []struct {
-		ID    string `json:"id"`
-		Label string `json:"label"`
-		Data  struct {
-			Trees []work.Tree `json:"trees"`
-		} `json:"data"`
-	}
+	var rows []projectRow
 	if err := json.Unmarshal(out.Bytes(), &rows); err != nil {
 		t.Fatal(err, out)
 	}
-	if len(rows) != 1 || rows[0].ID == "" || rows[0].Label != "shelled" || len(rows[0].Data.Trees) != 1 || rows[0].Data.Trees[0].Path != dir {
+	if len(rows) != 1 || rows[0].ID != "shelled" || rows[0].Label != "shelled" || rows[0].Data.Dir != dir {
 		t.Fatalf("rows %+v", rows)
 	}
 
 	out.Reset()
-	if err := tl.Main([]string{"-data", data, "project", "open", "--target", rows[0].ID, "--json", "{}", "--yes"}); err != nil {
+	if err := tl.Main([]string{"project", "open", "--target", rows[0].ID, "--json", "{}", "--yes"}); err != nil {
 		t.Fatal(err, out)
 	}
-	var trees []work.Tree
-	if err := json.Unmarshal(out.Bytes(), &trees); err != nil || len(trees) != 1 || trees[0].Path != dir {
+	var row Row
+	if err := json.Unmarshal(out.Bytes(), &row); err != nil || row.Dir != dir || row.Path != "~/proj/shelled" {
 		t.Fatalf("open %q %v", out, err)
 	}
-	if err := tl.Main([]string{"-data", data, "project", "open"}); err == nil || !strings.Contains(err.Error(), "--target") {
+	if err := tl.Main([]string{"project", "open"}); err == nil || !strings.Contains(err.Error(), "--target") {
 		t.Fatalf("open without target: %v", err)
 	}
 }
@@ -630,13 +615,13 @@ func TestProjectShellNewListOpen(t *testing.T) {
 func TestProjectShellNewFlags(t *testing.T) {
 	tl, out, gh := tool(t)
 	root := filepath.Join(tl.Home, "proj")
-	if err := tl.Main([]string{"project", "new", "--root", root, "pub", "--github", "--private=false", "--register=false"}); err != nil {
+	if err := tl.Main([]string{"project", "new", "--root", root, "pub", "--github", "--private=false", "--mtm=false"}); err != nil {
 		t.Fatal(err, out)
 	}
 	if len(*gh) != 1 || (*gh)[0][4] != "--public" {
 		t.Fatalf("gh %q", *gh)
 	}
-	if !strings.Contains(out.String(), "register: skipped") {
+	if !strings.Contains(out.String(), "mtm: skipped (--no-mtm)") {
 		t.Fatalf("out %q", out)
 	}
 }

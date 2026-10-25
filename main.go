@@ -1,35 +1,36 @@
-// Command o-proj creates and guards projects: a family tool (o-<tool>), so
-// o proj ARGS runs it, and so does mtm proj ARGS (mtm discovers o-<sub>
-// after its own mtm-<sub>, oden.WithPrefixes). Making a
-// project always goes through new, which creates the directory, runs git
-// init there and verifies that the directory is its own repository before
-// anything is committed (and, last, installs o-inventory's hooks when
-// o-inventory is on PATH); check is the guard to run before the first commit
-// in any directory. The home directory is itself a git repository, so a
-// directory without its own git init commits into it silently.
+// Command o-proj keeps the family's repositories: a family tool (o-<tool>),
+// so o proj ARGS runs it. Making a repository always goes through new, which
+// creates the directory, runs git init there and verifies that the directory
+// is its own repository before anything is committed, records it in the
+// manifest (manifest.go), links it from the hub (hub.go), installs
+// o-inventory's hooks and asks mtm for a work project (mtm.go). check is the
+// guard to run before the first commit in any directory: the home directory
+// may itself be a git repository, and a directory without its own git init
+// would commit into it silently.
 //
-//	o-proj new NAME [--root DIR] [--template T] [--existing] [--no-register] [--github] [--private|--public] [--license mit|none] [--family|-o] [--hub DIR|none]
+//	o-proj new NAME [--root DIR] [--template T] [--existing] [--github] [--private|--public] [--license mit|none] [--family|-o] [--hub DIR|none] [--no-mtm]
+//	o-proj adopt PATH [--name NAME] [--hub DIR|none]
+//	o-proj list [--table]
 //	o-proj link NAME | --all [--hub DIR]
 //	o-proj unlink NAME | --all [--hub DIR]
-//	o-proj adopt NAME
+//	o-proj clone [NAME...]
+//	o-proj sync [NAME...] [--pull] [--dry-run]
+//	o-proj status [DIR...] [--dirty|-d] [--clean|-c] [--json|-j]
+//	o-proj seed [--mtm-json FILE] [--inventory FILE] [--hub DIR] [--dry-run]
 //	o-proj check [DIR] [--root DIR]
-//	o-proj list
 //	o-proj templates
 //	o-proj project VERB [ARG...] [--ARG VALUE] [--target ID] [--json '{...}']
 //	o-proj catalog
 //
-// The first seven are the inline commands; project is the same work as an
-// ochazuke noun (shell.go), whose verbs print JSON, and catalog describes it
-// for a host that mounts this bin.
-//
-// -data (before the command or after it) is mtm's database, with mtm's
-// default. No daemon is started and there is no TUI.
+// project is the same work as an ochazuke noun (shell.go), whose verbs print
+// JSON, and catalog describes it for a host that mounts this bin. There is
+// no daemon and no TUI, and o-proj never opens mtm's database: mtm is
+// reached only through its command line.
 package main
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -41,15 +42,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/unixsuperhero/matomeru/internal/store"
-	"github.com/unixsuperhero/matomeru/internal/work"
 	ocli "github.com/unixsuperhero/ochazuke/cli"
 	"github.com/unixsuperhero/oden"
 )
-
-// Origin is the provenance new (and --existing, and adopt) records on the
-// projects it registers; link --all links only these.
-const Origin = "o-proj"
 
 // GitHubOwner is the account new --github creates repositories under.
 const GitHubOwner = "unixsuperhero"
@@ -99,19 +94,6 @@ func (t *Tool) exec(dir, name string, args ...string) ([]byte, error) {
 	return out.Bytes(), err
 }
 
-// DefaultData is mtm's default database (cmd/mtm DefaultData):
-// $XDG_DATA_HOME/matomeru/mtm.db, else ~/.local/share/matomeru/mtm.db.
-func (t *Tool) DefaultData() string {
-	base := lookup(t.Env, "XDG_DATA_HOME")
-	if base == "" {
-		if t.Home == "" {
-			return "mtm.db"
-		}
-		base = filepath.Join(t.Home, ".local", "share")
-	}
-	return filepath.Join(base, "matomeru", "mtm.db")
-}
-
 // DefaultRoot is where projects live, hiiro's project root: ~/proj.
 func (t *Tool) DefaultRoot() string { return filepath.Join(t.Home, "proj") }
 
@@ -124,30 +106,29 @@ func lookup(env []string, key string) string {
 	return ""
 }
 
-// Main parses the global -data flag, then runs the command word with oden.
+// Main runs the command word with oden.
 func (t *Tool) Main(args []string) error {
-	flags := flag.NewFlagSet(t.Prog, flag.ContinueOnError)
-	flags.SetOutput(t.Stderr)
-	data := flags.String("data", t.DefaultData(), "SQLite database path (mtm's)")
-	if err := flags.Parse(args); err != nil {
-		return &oden.ExitError{Code: 2}
-	}
-	app := oden.New("o-proj", flags.Args(), oden.WithBuiltins(), oden.WithStdio(os.Stdin, t.Stdout, t.Stderr), oden.WithEnv(t.Env))
+	app := oden.New("o-proj", args, oden.WithBuiltins(), oden.WithStdio(os.Stdin, t.Stdout, t.Stderr), oden.WithEnv(t.Env))
+	ctx := context.Background()
 	app.Add(
-		oden.Command{Name: "new", Summary: "create ROOT/NAME, git init it, verify, commit, register, link from the hub", Run: func(_ context.Context, a []string) error { return t.New(*data, a) }},
+		oden.Command{Name: "new", Summary: "create ROOT/NAME, git init it, verify, commit, record it in the manifest, link it, ask mtm for a work project", Run: func(_ context.Context, a []string) error { return t.New(a) }},
+		oden.Command{Name: "adopt", Summary: "record an existing repository (PATH) in the manifest and link it; its files are not touched", Run: func(_ context.Context, a []string) error { return t.Adopt(a) }},
+		oden.Command{Name: "list", Summary: "the manifest's repositories (JSON; --table for people)", Run: func(_ context.Context, a []string) error { return t.List(a) }},
+		oden.Command{Name: "link", Summary: "link one repository (NAME) or every one (--all) from the hub, ~/hub/o/NAME -> DIR", Run: func(_ context.Context, a []string) error { return t.Link(a) }},
+		oden.Command{Name: "unlink", Summary: "remove the hub link of one repository (NAME) or of every one (--all)", Run: func(_ context.Context, a []string) error { return t.Unlink(a) }},
+		oden.Command{Name: "clone", Summary: "clone the manifest's repositories missing on this machine, then link them", Run: func(_ context.Context, a []string) error { return t.Clone(ctx, a) }},
+		oden.Command{Name: "sync", Summary: "clone missing repositories, recreate links, fetch and report dirty/behind; --pull fast-forwards clean ones", Run: func(_ context.Context, a []string) error { return t.Sync(ctx, a) }},
+		oden.Command{Name: "status", Summary: "read-only git status of the manifest's repositories (or DIRs): dirty, clean, unavailable", Run: func(_ context.Context, a []string) error { return t.Status(ctx, a) }},
+		oden.Command{Name: "seed", Summary: "import repositories into the manifest from hub links, o-inventory's repos.json and an o-proj list file", Run: func(_ context.Context, a []string) error { return t.Seed(a) }},
 		oden.Command{Name: "check", Summary: "refuse a directory whose git toplevel is $HOME or above the project root", Run: func(_ context.Context, a []string) error { return t.Check(a) }},
 		oden.Command{Name: "templates", Summary: "the template catalog: name, kind (dir|tar.gz), path; .tmpl files render with Go text/template", Run: func(_ context.Context, a []string) error { return t.ListTemplates(a) }},
-		oden.Command{Name: "link", Summary: "link one registered project (NAME) or every one made by o-proj (--all) from the hub, ~/hub/o/NAME -> DIR", Run: func(_ context.Context, a []string) error { return t.Link(*data, a) }},
-		oden.Command{Name: "unlink", Summary: "remove the hub link of one registered project (NAME) or of every project not made by o-proj (--all)", Run: func(_ context.Context, a []string) error { return t.Unlink(*data, a) }},
-		oden.Command{Name: "adopt", Summary: "record a registered project as made by o-proj without touching its tree", Run: func(_ context.Context, a []string) error { return t.Adopt(*data, a) }},
-		oden.Command{Name: "list", Summary: "the projects in mtm's store with their trees (JSON)", Run: func(_ context.Context, a []string) error { return t.List(*data, a) }},
 	)
-	sh, err := t.shell(*data)
+	sh, err := t.shell()
 	if err != nil {
 		return err
 	}
 	ocli.Mount(app, sh)
-	return app.Run(context.Background())
+	return app.Run(ctx)
 }
 
 // parse parses flags that may come before or after the positional words.
@@ -170,13 +151,14 @@ func (t *Tool) say(format string, a ...any) { fmt.Fprintf(t.Stdout, format+"\n",
 
 // New makes a project: one output line per step, then cd DIR last, so a
 // shell wrapper can eval the final line.
-func (t *Tool) New(data string, args []string) error {
+func (t *Tool) New(args []string) error {
 	flags := flag.NewFlagSet(t.Prog+" new", flag.ContinueOnError)
 	flags.SetOutput(t.Stderr)
 	root := flags.String("root", t.DefaultRoot(), "directory the project is created in")
 	tmplName := flags.String("template", "", "a template from "+t.TemplateDir()+" (a directory or .tar.gz), or a path to one; *.tmpl files render with Go text/template (erb's analogue) and lose the suffix")
 	existing := flags.Bool("existing", false, "adopt a directory that already has files")
-	noRegister := flags.Bool("no-register", false, "do not add the project to mtm's store")
+	noMtm := flags.Bool("no-mtm", false, "do not ask mtm for a work project")
+	flags.BoolVar(noMtm, "no-register", false, "alias for --no-mtm")
 	github := flags.Bool("github", false, "create github.com/"+GitHubOwner+"/NAME and push")
 	private := flags.Bool("private", false, "the GitHub repository is private (the default)")
 	public := flags.Bool("public", false, "the GitHub repository is public")
@@ -184,13 +166,12 @@ func (t *Tool) New(data string, args []string) error {
 	hub := flags.String("hub", t.DefaultHub(), "the hub directory that links NAME -> DIR ($O_PROJ_HUB, else ~/hub/o); none skips the link")
 	family := flags.Bool("family", true, "link the project into the o/oden family hub; --family=false skips")
 	flags.BoolVar(family, "o", true, "alias for --family")
-	flags.StringVar(&data, "data", data, "SQLite database path (mtm's)")
 	words, err := parse(flags, args)
 	if err != nil {
 		return err
 	}
 	if len(words) != 1 {
-		return fmt.Errorf("usage: %s new NAME [--root DIR] [--template T] [--existing] [--no-register] [--github] [--private|--public] [--license mit|none] [--family|-o] [--hub DIR|none]", t.Prog)
+		return fmt.Errorf("usage: %s new NAME [--root DIR] [--template T] [--existing] [--github] [--private|--public] [--license mit|none] [--family|-o] [--hub DIR|none] [--no-mtm]", t.Prog)
 	}
 	name := words[0]
 	if name == "." || name == ".." || name == "" || strings.ContainsAny(name, `/\`) || strings.HasPrefix(name, "-") {
@@ -298,22 +279,19 @@ func (t *Tool) New(data string, args []string) error {
 		t.say("commit: %s %s", strings.TrimSpace(string(sha)), msg)
 	}
 
-	repo := ""
 	if *github {
 		visibility := "--private"
 		if *public {
 			visibility = "--public"
 		}
-		repo = GitHubOwner + "/" + name
+		repo := GitHubOwner + "/" + name
 		if _, err := t.Run(dir, "gh", "repo", "create", repo, visibility, "--source", dir, "--remote", "origin", "--push"); err != nil {
 			return err
 		}
 		t.say("github: %s (%s)", repo, strings.TrimPrefix(visibility, "--"))
 	}
 
-	if *noRegister {
-		t.say("register: skipped (--no-register)")
-	} else if err := t.register(data, name, dir, repo); err != nil {
+	if _, err := t.record(t.describe(name, dir, OriginNew)); err != nil {
 		return err
 	}
 	if !*family {
@@ -324,6 +302,11 @@ func (t *Tool) New(data string, args []string) error {
 		return err
 	}
 	t.hook(dir)
+	if *noMtm {
+		t.say("mtm: skipped (--no-mtm)")
+	} else {
+		t.mtmProject(name, dir)
+	}
 	t.say("cd %s", dir)
 	return nil
 }
@@ -396,50 +379,6 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func (t *Tool) register(data, name, dir, repo string) error {
-	db, err := store.Open(data)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	w, err := work.Open(db)
-	if err != nil {
-		return err
-	}
-	projects, err := w.Projects()
-	if err != nil {
-		return err
-	}
-	tree := work.Tree{Kind: "dir", Path: dir, Repo: repo}
-	for _, p := range projects {
-		if p.Name != name {
-			continue
-		}
-		if _, err := w.AddTree(p.ID, tree); err != nil {
-			return err
-		}
-		p, err = w.Project(p.ID)
-		if err != nil {
-			return err
-		}
-		p.Origin = Origin
-		if err := w.PutProject(p); err != nil {
-			return err
-		}
-		t.say("register: added tree %s to project %s (%s) in %s", dir, name, p.ID, data)
-		return nil
-	}
-	p := work.Project{ID: work.NewID(), Name: name, Status: "open", Created: work.Now(), Repo: repo, Origin: Origin}
-	if err := w.PutProject(p); err != nil {
-		return err
-	}
-	if _, err := w.AddTree(p.ID, tree); err != nil {
-		return err
-	}
-	t.say("register: project %s (%s) in %s", name, p.ID, data)
-	return nil
-}
-
 // Check is the guard before a first commit: it prints DIR's git toplevel and
 // fails when that toplevel is the home directory, or a repository at or
 // above the project root (which is never a project's own repository).
@@ -503,56 +442,4 @@ func (t *Tool) ListTemplates(args []string) error {
 		t.say("%s\t%s\t%s", tpl.Name, tpl.Kind, tpl.Path)
 	}
 	return nil
-}
-
-// List prints mtm's projects with their trees as JSON.
-func (t *Tool) List(data string, args []string) error {
-	flags := flag.NewFlagSet(t.Prog+" list", flag.ContinueOnError)
-	flags.SetOutput(t.Stderr)
-	flags.StringVar(&data, "data", data, "SQLite database path (mtm's)")
-	words, err := parse(flags, args)
-	if err != nil {
-		return err
-	}
-	if len(words) > 0 {
-		return fmt.Errorf("usage: %s list [-data PATH]", t.Prog)
-	}
-	projects, err := t.projects(data)
-	if err != nil {
-		return err
-	}
-	type row struct {
-		ID          string      `json:"id"`
-		Name        string      `json:"name"`
-		Status      string      `json:"status"`
-		Repo        string      `json:"repo,omitempty"`
-		DefaultTree string      `json:"default_tree,omitempty"`
-		Trees       []work.Tree `json:"trees"`
-		Origin      string      `json:"origin,omitempty"`
-	}
-	rows := make([]row, 0, len(projects))
-	for _, p := range projects {
-		trees := p.Trees
-		if trees == nil {
-			trees = []work.Tree{}
-		}
-		rows = append(rows, row{ID: p.ID, Name: p.Name, Status: p.Status, Repo: p.Repo, DefaultTree: p.DefaultTree, Trees: trees, Origin: p.Origin})
-	}
-	enc := json.NewEncoder(t.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(rows)
-}
-
-// projects reads the projects in mtm's store at data.
-func (t *Tool) projects(data string) ([]work.Project, error) {
-	db, err := store.Open(data)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	w, err := work.Open(db)
-	if err != nil {
-		return nil, err
-	}
-	return w.Projects()
 }

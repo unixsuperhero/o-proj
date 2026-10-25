@@ -7,16 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/unixsuperhero/matomeru/internal/store"
-	"github.com/unixsuperhero/matomeru/internal/work"
 )
 
-// The hub is one directory of links to every project o-proj makes or
-// adopts (origin o-proj in the store) (~/hub/o/NAME -> DIR), so the owner's hub repository indexes
-// them. Links are absolute: the targets are the absolute trees in mtm's
-// store, readlink then prints the same path the store holds, and a link
-// keeps working wherever the hub directory itself is reached from.
+// The hub is one directory of links to the manifest's repositories
+// (~/hub/o/NAME -> DIR), generated from the manifest on each machine: link
+// --all recreates them, so they are not committed. Links are absolute
+// (DIR is the entry's path expanded for this machine).
 
 // NoHub is the --hub value that skips the link.
 const NoHub = "none"
@@ -46,18 +42,28 @@ func (t *Tool) agentsMD(name string) string {
 		"Do not add a TODO.md or docs/plans/ to this repo.\n"
 }
 
-// expand resolves a leading ~/ against the tool's home.
+// expand resolves ~ and a leading ~/ against the tool's home.
 func (t *Tool) expand(p string) string {
+	if p == "~" && t.Home != "" {
+		return t.Home
+	}
 	if rest, ok := strings.CutPrefix(p, "~/"); ok && t.Home != "" {
 		return filepath.Join(t.Home, rest)
 	}
 	return p
 }
 
-// tilde abbreviates the home directory to ~ for messages.
+// tilde abbreviates the home directory to ~ (the home as given, or with
+// its symlinks resolved: /var is /private/var on macOS).
 func (t *Tool) tilde(p string) string {
-	if t.Home != "" && within(p, t.Home) {
-		if rel, err := filepath.Rel(t.Home, p); err == nil {
+	if t.Home == "" {
+		return p
+	}
+	for _, home := range []string{t.Home, real(t.Home)} {
+		if !within(p, home) {
+			continue
+		}
+		if rel, err := filepath.Rel(home, p); err == nil {
 			if rel == "." {
 				return "~"
 			}
@@ -109,32 +115,17 @@ func (t *Tool) link(hub, name, dir string) (string, error) {
 	return linked, nil
 }
 
-// LinkCounts is link's summary; Skipped counts the projects --all leaves
-// out because o-proj did not make them.
+// LinkCounts is link's summary.
 type LinkCounts struct {
 	Linked  int `json:"linked"`
 	Kept    int `json:"kept"`
 	Missing int `json:"missing"`
-	Skipped int `json:"skipped"`
 }
 
-// projectTree is the tree a project's hub link points at: its default
-// tree, else its first.
-func projectTree(p work.Project) string {
-	if p.DefaultTree != "" {
-		return p.DefaultTree
-	}
-	if len(p.Trees) > 0 {
-		return p.Trees[0].Path
-	}
-	return ""
-}
-
-// LinkProjects links one registered project (name), whatever made it, or
-// every project o-proj made (all) into hub, one line per project, then the
-// summary. A project whose tree is not on disk is reported as missing and
-// not linked.
-func (t *Tool) LinkProjects(data, hub, name string, all bool) (LinkCounts, error) {
+// LinkProjects links one manifest entry (name) or every one (all) into
+// hub, one line per entry, then the summary. An entry whose directory is
+// not on disk is reported as missing and not linked (sync clones it).
+func (t *Tool) LinkProjects(hub, name string, all bool) (LinkCounts, error) {
 	var n LinkCounts
 	if all == (name != "") {
 		return n, fmt.Errorf("usage: %s link NAME | --all [--hub DIR]", t.Prog)
@@ -142,66 +133,59 @@ func (t *Tool) LinkProjects(data, hub, name string, all bool) (LinkCounts, error
 	if hub == NoHub {
 		return n, errors.New("link needs a hub directory, not --hub none")
 	}
-	projects, err := t.projects(data)
+	entries, err := t.Manifest()
 	if err != nil {
 		return n, err
 	}
-	found := false
-	for _, p := range projects {
-		if !all && p.Name != name {
-			continue
+	if !all {
+		if entries, err = t.pick(entries, []string{name}); err != nil {
+			return n, err
 		}
-		found = true
-		if all && p.Origin != Origin {
-			n.Skipped++
-			continue
-		}
-		dir := projectTree(p)
-		if dir == "" {
-			t.say("missing: %s has no tree", p.Name)
-			n.Missing++
-			continue
-		}
-		if _, err := os.Stat(dir); err != nil {
-			t.say("missing: %s tree %s does not exist", p.Name, dir)
-			n.Missing++
-			continue
-		}
-		outcome, err := t.link(hub, p.Name, dir)
+	}
+	for _, e := range entries {
+		outcome, err := t.linkEntry(hub, e)
 		if err != nil {
 			return n, err
 		}
-		if outcome == kept {
+		switch outcome {
+		case kept:
 			n.Kept++
-		} else {
+		case linked:
 			n.Linked++
+		default:
+			n.Missing++
 		}
 	}
-	if !found && !all {
-		return n, fmt.Errorf("no registered project %q; see %s list", name, t.Prog)
-	}
-	t.say("linked %d, kept %d, missing %d, skipped %d (not made by %s)", n.Linked, n.Kept, n.Missing, n.Skipped, Origin)
+	t.say("linked %d, kept %d, missing %d", n.Linked, n.Kept, n.Missing)
 	return n, nil
 }
 
-// Link is the inline command: link [NAME] [--all] [--hub DIR].
-func (t *Tool) Link(data string, args []string) error {
-	name, hub, all, err := t.hubArgs("link", data, args)
+// linkEntry links e when its directory exists; else "missing".
+func (t *Tool) linkEntry(hub string, e Entry) (string, error) {
+	dir := t.Dir(e)
+	if _, err := os.Stat(dir); err != nil {
+		t.say("missing: %s %s does not exist", e.Name, e.Path)
+		return "missing", nil
+	}
+	return t.link(hub, e.Name, dir)
+}
+
+// Link is the inline command: link NAME | --all [--hub DIR].
+func (t *Tool) Link(args []string) error {
+	name, hub, all, err := t.hubArgs("link", args)
 	if err != nil {
 		return err
 	}
-	_, err = t.LinkProjects(data, hub, name, all)
+	_, err = t.LinkProjects(hub, name, all)
 	return err
 }
 
-// hubArgs parses link's and unlink's arguments: [NAME] [--all] [--hub DIR]
-// [-data PATH]; data is updated in place through the flag.
-func (t *Tool) hubArgs(verb, data string, args []string) (name, hub string, all bool, err error) {
+// hubArgs parses link's and unlink's arguments: [NAME] [--all] [--hub DIR].
+func (t *Tool) hubArgs(verb string, args []string) (name, hub string, all bool, err error) {
 	flags := flag.NewFlagSet(t.Prog+" "+verb, flag.ContinueOnError)
 	flags.SetOutput(t.Stderr)
-	allFlag := flags.Bool("all", false, verb+" every project the verb covers")
+	allFlag := flags.Bool("all", false, verb+" every repository in the manifest")
 	hubFlag := flags.String("hub", t.DefaultHub(), "the hub directory the links are in ($O_PROJ_HUB, else ~/hub/o)")
-	flags.StringVar(&data, "data", data, "SQLite database path (mtm's)")
 	words, err := parse(flags, args)
 	if err != nil {
 		return "", "", false, err
@@ -221,12 +205,12 @@ type UnlinkCounts struct {
 	Kept     int `json:"kept"`
 }
 
-// UnlinkProjects removes the hub link of one registered project (name) or
-// of every project o-proj did not make (all). Only a symlink to the
-// project's own tree is removed; any other link or a file is kept and
-// reported, and a name with nothing in the hub is passed over silently.
-// Hub entries that name no registered project are never looked at.
-func (t *Tool) UnlinkProjects(data, hub, name string, all bool) (UnlinkCounts, error) {
+// UnlinkProjects removes the hub link of one manifest entry (name) or of
+// every one (all). Only a symlink to the entry's own directory is removed;
+// any other link or a file is kept and reported, and a name with nothing in
+// the hub is passed over silently. Hub entries the manifest does not name
+// are never looked at. The manifest is not changed.
+func (t *Tool) UnlinkProjects(hub, name string, all bool) (UnlinkCounts, error) {
 	var n UnlinkCounts
 	if all == (name != "") {
 		return n, fmt.Errorf("usage: %s unlink NAME | --all [--hub DIR]", t.Prog)
@@ -238,17 +222,17 @@ func (t *Tool) UnlinkProjects(data, hub, name string, all bool) (UnlinkCounts, e
 	if err != nil {
 		return n, err
 	}
-	projects, err := t.projects(data)
+	entries, err := t.Manifest()
 	if err != nil {
 		return n, err
 	}
-	found := false
-	for _, p := range projects {
-		if all && p.Origin == Origin || !all && p.Name != name {
-			continue
+	if !all {
+		if entries, err = t.pick(entries, []string{name}); err != nil {
+			return n, err
 		}
-		found = true
-		path := filepath.Join(hub, p.Name)
+	}
+	for _, e := range entries {
+		path := filepath.Join(hub, e.Name)
 		fi, err := os.Lstat(path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -264,9 +248,8 @@ func (t *Tool) UnlinkProjects(data, hub, name string, all bool) (UnlinkCounts, e
 		if err != nil {
 			return n, err
 		}
-		dir := projectTree(p)
-		if dir == "" || target != dir && !samePath(target, dir) {
-			t.say("keep: %s -> %s (not %s's tree)", t.tilde(path), target, p.Name)
+		if dir := t.Dir(e); target != dir && !samePath(target, dir) {
+			t.say("keep: %s -> %s (not %s's directory)", t.tilde(path), target, e.Name)
 			n.Kept++
 			continue
 		}
@@ -276,64 +259,16 @@ func (t *Tool) UnlinkProjects(data, hub, name string, all bool) (UnlinkCounts, e
 		t.say("unlink: %s -> %s", t.tilde(path), target)
 		n.Unlinked++
 	}
-	if !found && !all {
-		return n, fmt.Errorf("no registered project %q; see %s list", name, t.Prog)
-	}
 	t.say("unlinked %d, kept %d", n.Unlinked, n.Kept)
 	return n, nil
 }
 
-// Unlink is the inline command: unlink [NAME] [--all] [--hub DIR].
-func (t *Tool) Unlink(data string, args []string) error {
-	name, hub, all, err := t.hubArgs("unlink", data, args)
+// Unlink is the inline command: unlink NAME | --all [--hub DIR].
+func (t *Tool) Unlink(args []string) error {
+	name, hub, all, err := t.hubArgs("unlink", args)
 	if err != nil {
 		return err
 	}
-	_, err = t.UnlinkProjects(data, hub, name, all)
+	_, err = t.UnlinkProjects(hub, name, all)
 	return err
-}
-
-// Adopt records a registered project as made by o-proj (for projects o-proj
-// registered before it recorded provenance). It writes only the store row:
-// no git, no files, no link.
-func (t *Tool) Adopt(data string, args []string) error {
-	flags := flag.NewFlagSet(t.Prog+" adopt", flag.ContinueOnError)
-	flags.SetOutput(t.Stderr)
-	flags.StringVar(&data, "data", data, "SQLite database path (mtm's)")
-	words, err := parse(flags, args)
-	if err != nil {
-		return err
-	}
-	if len(words) != 1 {
-		return fmt.Errorf("usage: %s adopt NAME", t.Prog)
-	}
-	db, err := store.Open(data)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	w, err := work.Open(db)
-	if err != nil {
-		return err
-	}
-	projects, err := w.Projects()
-	if err != nil {
-		return err
-	}
-	for _, p := range projects {
-		if p.Name != words[0] {
-			continue
-		}
-		if p.Origin == Origin {
-			t.say("adopt: %s (%s) already has origin %s", p.Name, p.ID, Origin)
-			return nil
-		}
-		p.Origin = Origin
-		if err := w.PutProject(p); err != nil {
-			return err
-		}
-		t.say("adopt: %s (%s) origin %s", p.Name, p.ID, Origin)
-		return nil
-	}
-	return fmt.Errorf("no registered project %q; see %s list", words[0], t.Prog)
 }
