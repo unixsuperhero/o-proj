@@ -20,7 +20,8 @@ Family plans, todos and the roadmap live in `~/hub/o-plans/` (`README.md` is the
 | `status` (moved from o-family): the report and its git inspection | `report.go`, `status.go` |
 | `seed`: the one-time import into the manifest | `seed.go` |
 | The mtm project `new` asks for, through mtm's CLI | `mtm.go` |
-| The ochazuke runtime: the `project` noun, `catalog` | `shell.go` |
+| The ochazuke runtime: the `project` and `template` nouns, `catalog` | `shell.go` |
+| Tables: each noun's catalog columns and its rows' cells (license and hub-link detection) | `table.go` |
 | Templates, licenses | `templates.go`, `license.go` |
 
 ## Invariants

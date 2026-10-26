@@ -14,8 +14,15 @@ o proj status [DIR...] [-d|--dirty] [-c|--clean] [-j|--json]
 o proj seed [--mtm-json FILE] [--inventory FILE] [--hub DIR] [--dry-run]
 o proj check [DIR]                      # refuse a directory whose git toplevel is $HOME or above ~/proj
 o proj templates
-o proj catalog                          # the project noun, for nabe
+o proj catalog                          # the project and template nouns, for nabe
 ```
+
+`o proj project list` and `o proj template list` answer rows (`{id, label, data, cells}`) that a host draws as tables: the catalog declares each noun's `columns` and every row carries one cell per column.
+
+| Noun | Columns (name never drops; when narrow, project drops origin, license, linked, then path; template drops kind, then path) |
+| --- | --- |
+| project | name, origin, path (with `~`), license (`mit`, `other`, `none`; empty when the directory is not on this machine), linked (`yes`, `no`, or `other` when something else is at `~/hub/o/NAME`) |
+| template | name, kind (`dir` or `tar.gz`), path |
 
 ## The manifest
 

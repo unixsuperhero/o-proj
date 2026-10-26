@@ -10,19 +10,29 @@ import (
 	ocli "github.com/unixsuperhero/ochazuke/cli"
 )
 
-// The data side of o-proj is an ochazuke runtime with one noun, project,
-// behind ochazuke/cli (mounted in Main): o-proj project VERB [ARG...]
+// The data side of o-proj is an ochazuke runtime with two nouns, project
+// and template, behind ochazuke/cli (mounted in Main): o-proj project VERB [ARG...]
 // [--ARG VALUE] runs a verb and prints its result as JSON, and o-proj
-// catalog describes the noun for a host (nabe) that mounts the bin. The
+// catalog describes the nouns for a host (nabe) that mounts the bin. The
 // rows of project list are the manifest's repositories, {id: name, label:
-// name, data: row}; a --target no list shows yet is revealed by loading
-// them. There is no TUI: the runtime has no page and nothing renders it.
+// name, data: row, cells}; template list's are the template catalog, {id:
+// name, label: name, data: template, cells} (columns in table.go). A
+// --target no list shows yet is revealed by loading them. There is no TUI: the runtime has no page and nothing renders it.
 
 // projectRow is one element of project list.
 type projectRow struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Data  Row    `json:"data"`
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Data  Row      `json:"data"`
+	Cells []string `json:"cells,omitempty"`
+}
+
+// templateRow is one element of template list.
+type templateRow struct {
+	ID    string   `json:"id"`
+	Label string   `json:"label"`
+	Data  Template `json:"data"`
+	Cells []string `json:"cells,omitempty"`
 }
 
 // shell is the NOUN VERB shell over a runtime holding the project noun.
@@ -32,6 +42,12 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 	if err != nil {
 		return nil, err
 	}
+	list.SetColumns(projectColumns...)
+	templates, err := r.AddList("templates", nil)
+	if err != nil {
+		return nil, err
+	}
+	templates.SetColumns(templateColumns...)
 	load := func() ([]projectRow, error) {
 		entries, err := t.Manifest()
 		if err != nil {
@@ -40,10 +56,25 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 		rows := make([]projectRow, 0, len(entries))
 		items := make([]ochazuke.ListItem, 0, len(entries))
 		for _, row := range t.rows(entries) {
-			rows = append(rows, projectRow{ID: row.Name, Label: row.Name, Data: row})
-			items = append(items, ochazuke.ListItem{ID: row.Name, Label: row.Name, Noun: "project", Data: row})
+			cells := t.projectCells(row)
+			rows = append(rows, projectRow{ID: row.Name, Label: row.Name, Data: row, Cells: cells})
+			items = append(items, ochazuke.ListItem{ID: row.Name, Label: row.Name, Noun: "project", Data: row, Cells: cells})
 		}
 		return rows, list.SetItems(items)
+	}
+	loadTemplates := func() ([]templateRow, error) {
+		catalog, err := t.Templates()
+		if err != nil {
+			return nil, err
+		}
+		rows := make([]templateRow, 0, len(catalog))
+		items := make([]ochazuke.ListItem, 0, len(catalog))
+		for _, tpl := range catalog {
+			cells := t.templateCells(tpl)
+			rows = append(rows, templateRow{ID: tpl.Name, Label: tpl.Name, Data: tpl, Cells: cells})
+			items = append(items, ochazuke.ListItem{ID: tpl.Name, Label: tpl.Name, Noun: "template", Data: tpl, Cells: cells})
+		}
+		return rows, templates.SetItems(items)
 	}
 	result := func(v any, err error) ochazuke.Result {
 		if err != nil {
@@ -57,7 +88,7 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 		defer func() { t.Stdout = saved }()
 		return f()
 	}
-	r.Define("project").
+	r.Define("project").Columns(projectColumns...).
 		Verb("list", func(ochazuke.Ctx) ochazuke.Result { return result(load()) },
 			"the manifest's repositories: {id, label, data: {name, url, path, branch, origin, dir}}").Rows("project").
 		Verb("new", func(c ochazuke.Ctx) ochazuke.Result { return result(t.newFromArgs(c.Args)) },
@@ -101,7 +132,7 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 			}
 			return result(catalog, err)
 		},
-			"the template catalog: {name, kind, path}").
+			"the template catalog: {name, kind, path} (template list has the same as rows)").
 		Verb("open", func(c ochazuke.Ctx) ochazuke.Result {
 			d, ok := c.Instance.Data.(Row)
 			if c.Instance.Noun != "project" || !ok {
@@ -109,6 +140,9 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 			}
 			return ochazuke.Done(d)
 		}, "print the target repository's manifest row")
+	r.Define("template").Columns(templateColumns...).
+		Verb("list", func(ochazuke.Ctx) ochazuke.Result { return result(loadTemplates()) },
+			"the template catalog: {id, label, data: {name, kind, path}, cells}").Rows("template")
 	params := func(key string, p map[string]ochazuke.Parameter) {
 		op := r.Operations[key]
 		op.Parameters = p
@@ -150,7 +184,13 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 	})
 	sh := ocli.New(r, "o-proj", os.Stdin, t.Stdout, t.Stderr)
 	sh.Usage = ocli.DefaultUsage(t.Prog)
-	sh.Reveal = func(string) error { _, err := load(); return err }
+	sh.Reveal = func(string) error {
+		if _, err := load(); err != nil {
+			return err
+		}
+		_, err := loadTemplates()
+		return err
+	}
 	return sh, nil
 }
 
