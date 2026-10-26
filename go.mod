@@ -3,8 +3,8 @@ module github.com/unixsuperhero/o-proj
 go 1.27.1
 
 require (
-	github.com/unixsuperhero/ochazuke v0.0.0-00010101000000-000000000000
-	github.com/unixsuperhero/oden v0.0.0-00010101000000-000000000000
+	github.com/unixsuperhero/ochazuke v0.1.0
+	github.com/unixsuperhero/oden v0.1.0
 )
 
 require (
@@ -27,7 +27,3 @@ require (
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )
-
-replace github.com/unixsuperhero/ochazuke => ../ochazuke
-
-replace github.com/unixsuperhero/oden => ../oden
