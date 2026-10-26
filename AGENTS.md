@@ -32,4 +32,4 @@ Family plans, todos and the roadmap live in `~/hub/o-plans/` (`README.md` is the
 - Tests run in a temp home with a temp manifest; no test reaches the real hub, mtm or GitHub (gh calls are recorded; mtm is a fake script).
 - Every commit: `gofmt -l . && go vet ./... && go test -race ./...` green, `go run . catalog` answers, `o proj check`. No amends.
 
-Build: `go build -o ~/bin/o-proj .`. oden and ochazuke are required at their tags (`v0.1.0`); an untracked `go.work` (`go work init . && go work use ../oden ../ochazuke`) builds against the sibling checkouts, and `GOWORK=off` builds from the tags as a fresh clone does.
+Build: `go build -o ~/bin/o-proj .`. ochazuke (`v0.6.0`) and oden (`v0.1.1`) are required at their tags; an untracked `go.work` (`go work init . && go work use ../oden ../ochazuke`) builds against the sibling checkouts, and `GOWORK=off` builds from the tags as a fresh clone does.
