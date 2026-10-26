@@ -90,7 +90,7 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 	}
 	r.Define("project").Columns(projectColumns...).
 		Verb("list", func(ochazuke.Ctx) ochazuke.Result { return result(load()) },
-			"the manifest's repositories: {id, label, data: {name, url, path, branch, origin, dir}}").Rows("project").
+			"the manifest's repositories: {id, label, data: {name, url, path, branch, origin, dir}}").Rows("project").Fetch().
 		Verb("new", func(c ochazuke.Ctx) ochazuke.Result { return result(t.newFromArgs(c.Args)) },
 			"create ROOT/NAME, git init it, verify, commit, record it in the manifest, link it, ask mtm for a work project").
 		Verb("adopt", func(c ochazuke.Ctx) ochazuke.Result {
@@ -117,14 +117,14 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 				return ochazuke.Failed(err)
 			}
 			return ochazuke.Done(collect(context.Background(), repos))
-		}, "read-only git status of every repository: {repos, summary}").
+		}, "read-only git status of every repository: {repos, summary}").Fetch().
 		Verb("check", func(c ochazuke.Ctx) ochazuke.Result {
 			dir, top, err := t.guard(ochazuke.StringArg(c.Args, "dir", "."), t.DefaultRoot())
 			if err != nil {
 				return ochazuke.Failed(err)
 			}
 			return ochazuke.Done(map[string]string{"dir": dir, "toplevel": top})
-		}, "refuse a directory whose git toplevel is $HOME or above the project root").
+		}, "refuse a directory whose git toplevel is $HOME or above the project root").Fetch().
 		Verb("templates", func(ochazuke.Ctx) ochazuke.Result {
 			catalog, err := t.Templates()
 			if catalog == nil {
@@ -132,17 +132,19 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 			}
 			return result(catalog, err)
 		},
-			"the template catalog: {name, kind, path} (template list has the same as rows)").
+			"the template catalog: {name, kind, path} (template list has the same as rows)").Fetch().
 		Verb("open", func(c ochazuke.Ctx) ochazuke.Result {
 			d, ok := c.Instance.Data.(Row)
 			if c.Instance.Noun != "project" || !ok {
 				return ochazuke.Failed(errors.New("project open needs --target NAME, a name from project list"))
 			}
 			return ochazuke.Done(d)
-		}, "print the target repository's manifest row")
+		}, "print the target repository's manifest row").Fetch()
 	r.Define("template").Columns(templateColumns...).
 		Verb("list", func(ochazuke.Ctx) ochazuke.Result { return result(loadTemplates()) },
-			"the template catalog: {id, label, data: {name, kind, path}, cells}").Rows("template")
+			"the template catalog: {id, label, data: {name, kind, path}, cells}").Rows("template").Fetch()
+	// The verbs that write: the manifest, the hub links, clones and pulls.
+	setHistory(r, ochazuke.HistoryChange, "project.new", "project.adopt", "project.link", "project.unlink", "project.sync")
 	params := func(key string, p map[string]ochazuke.Parameter) {
 		op := r.Operations[key]
 		op.Parameters = p
@@ -221,4 +223,19 @@ func (t *Tool) newFromArgs(args ochazuke.Arguments) (map[string]string, error) {
 		return nil, err
 	}
 	return map[string]string{"name": name, "dir": filepath.Join(base, name)}, nil
+}
+
+// setHistory declares the history kind (Operation.HistoryKind) of each
+// named verb, so none is left to ochazuke's default: NounBuilder.Fetch
+// marks a read where it is declared, and the builder has no method for a
+// change. An unknown key panics, so a renamed verb is renamed here too.
+func setHistory(r *ochazuke.Runtime, kind string, keys ...string) {
+	for _, key := range keys {
+		op, ok := r.Operations[key]
+		if !ok {
+			panic("setHistory: no operation " + key)
+		}
+		op.HistoryKind = kind
+		r.Operations[key] = op
+	}
 }
