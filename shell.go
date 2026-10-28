@@ -146,9 +146,9 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 	// The verbs that write: the manifest, the hub links, clones and pulls.
 	setHistory(r, ochazuke.HistoryChange, "project.new", "project.adopt", "project.link", "project.unlink", "project.sync")
 	params := func(key string, p map[string]ochazuke.Parameter) {
-		op := r.Operations[key]
+		op := r.Operations[r.CanonicalKey(key)]
 		op.Parameters = p
-		r.Operations[key] = op
+		r.Operations[r.CanonicalKey(key)] = op
 	}
 	params("project.new", map[string]ochazuke.Parameter{
 		"name":     {Type: "string", Required: true, Description: "the project directory's name under root"},
@@ -231,11 +231,11 @@ func (t *Tool) newFromArgs(args ochazuke.Arguments) (map[string]string, error) {
 // change. An unknown key panics, so a renamed verb is renamed here too.
 func setHistory(r *ochazuke.Runtime, kind string, keys ...string) {
 	for _, key := range keys {
-		op, ok := r.Operations[key]
+		op, ok := r.Operations[r.CanonicalKey(key)]
 		if !ok {
 			panic("setHistory: no operation " + key)
 		}
 		op.HistoryKind = kind
-		r.Operations[key] = op
+		r.Operations[r.CanonicalKey(key)] = op
 	}
 }

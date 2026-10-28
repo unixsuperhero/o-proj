@@ -3,7 +3,7 @@ module github.com/unixsuperhero/o-proj
 go 1.27.1
 
 require (
-	github.com/unixsuperhero/ochazuke v0.9.0
+	github.com/unixsuperhero/ochazuke v0.28.0
 	github.com/unixsuperhero/oden v0.1.1
 )
 

@@ -29,7 +29,7 @@ gofmt -l . && go vet ./... && go test -race ./...
 go build -o ~/bin/o-proj .
 ```
 
-ochazuke (`v0.9.0`) and oden (`v0.1.1`) are required at their tags. An untracked `go.work` (`go work init . && go work use ../oden ../ochazuke`) builds against the sibling checkouts; `GOWORK=off` builds from the tags as a fresh clone does.
+ochazuke (`v0.28.0`) and oden (`v0.1.1`) are required at their tags. An untracked `go.work` (`go work init . && go work use ../oden ../ochazuke`) builds against the sibling checkouts; `GOWORK=off` builds from the tags as a fresh clone does.
 
 ## Usage
 
