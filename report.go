@@ -12,7 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/unixsuperhero/oden"
+	"ofam.dev/oden"
 )
 
 // Status is o-family's read-only report (moved here): every manifest entry,

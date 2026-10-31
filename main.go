@@ -42,12 +42,39 @@ import (
 	"strings"
 	"time"
 
-	ocli "github.com/unixsuperhero/ochazuke/cli"
-	"github.com/unixsuperhero/oden"
+	ocli "ofam.dev/ochazuke/cli"
+	"ofam.dev/oden"
 )
 
-// GitHubOwner is the account new --github creates repositories under.
-const GitHubOwner = "unixsuperhero"
+// The defaults for where new projects live on GitHub and what their Go
+// module path is; $O_PROJ_GITHUB_OWNER and $O_PROJ_MODULE_PREFIX override them.
+const (
+	DefaultGitHubOwner  = "ofamtools"
+	DefaultModulePrefix = "ofam.dev/"
+)
+
+// GitHubOwner is the account new --github creates repositories under:
+// $O_PROJ_GITHUB_OWNER, else DefaultGitHubOwner.
+func (t *Tool) GitHubOwner() string {
+	if v := lookup(t.Env, "O_PROJ_GITHUB_OWNER"); v != "" {
+		return v
+	}
+	return DefaultGitHubOwner
+}
+
+// ModulePrefix starts a new project's Go module path (a template's
+// {{.Module}} is the prefix and NAME): $O_PROJ_MODULE_PREFIX, else
+// DefaultModulePrefix. A prefix without a trailing slash gets one.
+func (t *Tool) ModulePrefix() string {
+	v := lookup(t.Env, "O_PROJ_MODULE_PREFIX")
+	if v == "" {
+		v = DefaultModulePrefix
+	}
+	if !strings.HasSuffix(v, "/") {
+		v += "/"
+	}
+	return v
+}
 
 // Tool is one invocation's world: streams, the environment its commands run
 // with, the home directory the guard refuses, and how commands are run (a
@@ -159,7 +186,7 @@ func (t *Tool) New(args []string) error {
 	existing := flags.Bool("existing", false, "adopt a directory that already has files")
 	noMtm := flags.Bool("no-mtm", false, "do not ask mtm for a work project")
 	flags.BoolVar(noMtm, "no-register", false, "alias for --no-mtm")
-	github := flags.Bool("github", false, "create github.com/"+GitHubOwner+"/NAME and push")
+	github := flags.Bool("github", false, "create github.com/"+t.GitHubOwner()+"/NAME and push ($O_PROJ_GITHUB_OWNER, else "+DefaultGitHubOwner+")")
 	private := flags.Bool("private", false, "the GitHub repository is private (the default)")
 	public := flags.Bool("public", false, "the GitHub repository is public")
 	license := flags.String("license", Licenses[0], "the LICENSE written where absent: "+strings.Join(Licenses, " or "))
@@ -227,7 +254,7 @@ func (t *Tool) New(args []string) error {
 	// the template, then the minimal files where the template left them out
 	var wrote []string
 	if tpl != nil {
-		data := TemplateData{Name: name, Dir: dir, Root: base, Date: t.Now().Format("2006-01-02"), User: t.User, Module: "github.com/" + GitHubOwner + "/" + name}
+		data := TemplateData{Name: name, Dir: dir, Root: base, Date: t.Now().Format("2006-01-02"), User: t.User, Module: t.ModulePrefix() + name}
 		files, err := Apply(*tpl, dir, data)
 		if err != nil {
 			return err
@@ -284,7 +311,7 @@ func (t *Tool) New(args []string) error {
 		if *public {
 			visibility = "--public"
 		}
-		repo := GitHubOwner + "/" + name
+		repo := t.GitHubOwner() + "/" + name
 		if _, err := t.Run(dir, "gh", "repo", "create", repo, visibility, "--source", dir, "--remote", "origin", "--push"); err != nil {
 			return err
 		}

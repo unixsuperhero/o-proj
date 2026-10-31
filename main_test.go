@@ -35,6 +35,8 @@ func tool(t *testing.T) (*Tool, *bytes.Buffer, *[][]string) {
 		"O_PROJ_MANIFEST=",
 		"O_PROJ_MTM=",
 		"O_PROJ_MTM_ARGS=",
+		"O_PROJ_GITHUB_OWNER=",
+		"O_PROJ_MODULE_PREFIX=",
 		// git's directory and the system dirs only: a real o-inventory
 		// (~/bin) never runs from a test.
 		"PATH="+testPath(t),
@@ -198,7 +200,7 @@ func TestNewGitHubArgv(t *testing.T) {
 		t.Fatal(err, out)
 	}
 	dir := filepath.Join(root, "pub")
-	want := []string{"gh", "repo", "create", "unixsuperhero/pub", "--public", "--source", dir, "--remote", "origin", "--push"}
+	want := []string{"gh", "repo", "create", "ofamtools/pub", "--public", "--source", dir, "--remote", "origin", "--push"}
 	if len(*gh) != 1 || !slices.Equal((*gh)[0], want) {
 		t.Fatalf("gh %q", *gh)
 	}
@@ -208,6 +210,17 @@ func TestNewGitHubArgv(t *testing.T) {
 	}
 	if len(*gh) != 1 || (*gh)[0][4] != "--private" {
 		t.Fatalf("gh %q", *gh)
+	}
+}
+
+func TestOwnerAndModulePrefixFromEnv(t *testing.T) {
+	tl, _, _ := tool(t)
+	if tl.GitHubOwner() != DefaultGitHubOwner || tl.ModulePrefix() != DefaultModulePrefix {
+		t.Fatalf("defaults %q %q", tl.GitHubOwner(), tl.ModulePrefix())
+	}
+	tl.Env = append(tl.Env, "O_PROJ_GITHUB_OWNER=someone", "O_PROJ_MODULE_PREFIX=example.com/x")
+	if tl.GitHubOwner() != "someone" || tl.ModulePrefix() != "example.com/x/" {
+		t.Fatalf("overrides %q %q", tl.GitHubOwner(), tl.ModulePrefix())
 	}
 }
 
@@ -453,7 +466,7 @@ func TestTemplatesListing(t *testing.T) {
 }
 
 func TestNewWithTemplate(t *testing.T) {
-	const wantReadme = "# app\nmodule github.com/unixsuperhero/app on 2026-10-24 by tester\n"
+	const wantReadme = "# app\nmodule ofam.dev/app on 2026-10-24 by tester\n"
 	for _, tc := range []struct {
 		template string
 		files    map[string]string

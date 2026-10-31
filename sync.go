@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/unixsuperhero/oden"
+	"ofam.dev/oden"
 )
 
 // SyncOptions are clone's and sync's switches.

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/unixsuperhero/ochazuke"
-	ocli "github.com/unixsuperhero/ochazuke/cli"
+	"ofam.dev/ochazuke"
+	ocli "ofam.dev/ochazuke/cli"
 )
 
 // The data side of o-proj is an ochazuke runtime with two nouns, project
@@ -154,7 +154,7 @@ func (t *Tool) shell() (*ocli.Shell, error) {
 		"name":     {Type: "string", Required: true, Description: "the project directory's name under root"},
 		"root":     {Type: "string", Description: "directory the project is created in (default ~/proj)"},
 		"template": {Type: "string", Description: "a template name from project templates, or a path"},
-		"github":   {Type: "boolean", Description: "create github.com/" + GitHubOwner + "/NAME and push"},
+		"github":   {Type: "boolean", Description: "create github.com/" + t.GitHubOwner() + "/NAME and push ($O_PROJ_GITHUB_OWNER, else " + DefaultGitHubOwner + ")"},
 		"private":  {Type: "boolean", Description: "the GitHub repository is private (default true)"},
 		"license":  {Type: "string", Enum: Licenses, Description: "the LICENSE written where absent (default mit)"},
 		"existing": {Type: "boolean", Description: "adopt a directory that already has files"},

@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/unixsuperhero/oden"
+	"ofam.dev/oden"
 )
 
 func runGit(t *testing.T, dir string, args ...string) {

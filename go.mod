@@ -1,10 +1,10 @@
-module github.com/unixsuperhero/o-proj
+module ofam.dev/o-proj
 
 go 1.27.1
 
 require (
-	github.com/unixsuperhero/ochazuke v0.28.0
-	github.com/unixsuperhero/oden v0.1.1
+	ofam.dev/ochazuke v0.28.0
+	ofam.dev/oden v0.1.1
 )
 
 require (

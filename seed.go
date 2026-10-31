@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/unixsuperhero/oden"
+	"ofam.dev/oden"
 )
 
 // Seed imports repositories into the manifest once, from what recorded

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/unixsuperhero/oden"
+	"ofam.dev/oden"
 )
 
 // repoAt makes a git repository with one commit at dir.

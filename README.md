@@ -4,22 +4,22 @@
     <img alt="o-proj" src="assets/logo-light.svg" width="247">
   </picture>
   <br>
-  <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/unixsuperhero/o-proj"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/unixsuperhero/o-proj"></a>
+  <a href="go.mod"><img alt="Go version" src="https://img.shields.io/github/go-mod/go-version/ofamtools/o-proj"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/ofamtools/o-proj"></a>
 </p>
 
 <p align="center">The family's repositories on disk: create them with a verified git init, record them in one manifest, link them from the hub, and clone, sync and check them on any machine.</p>
 
 <p align="center"><img alt="o-proj in a throwaway home: seeding the manifest from hub links, adopting a repository, the manifest and git status tables, a new project and a dry-run sync" src="assets/demo.gif" width="720"></p>
 
-o-proj (`o proj` under [oden](https://github.com/unixsuperhero/oden)'s `o`, or `o-proj`) keeps the family's repositories: it creates a repository with a verified `git init`, records it in the manifest `~/hub/repos.json`, links it from `~/hub/o`, clones and syncs the manifest on another machine, and reports git status. It moved out of matomeru (`cmd/o-proj`, history kept by `git subtree split`) and folds in o-family's status report.
+o-proj (`o proj` under [oden](https://github.com/ofamtools/oden)'s `o`, or `o-proj`) keeps the family's repositories: it creates a repository with a verified `git init`, records it in the manifest `~/hub/repos.json`, links it from `~/hub/o`, clones and syncs the manifest on another machine, and reports git status. It moved out of matomeru (`cmd/o-proj`, history kept by `git subtree split`) and folds in o-family's status report.
 
 ## Install
 
-Module `github.com/unixsuperhero/o-proj`; requires Go 1.27 or newer.
+Module `ofam.dev/o-proj`; requires Go 1.27 or newer.
 
 ```sh
-go install github.com/unixsuperhero/o-proj@latest
+go install ofam.dev/o-proj@latest
 ```
 
 or, from a checkout:
@@ -49,6 +49,8 @@ o proj catalog                          # the project and template nouns, for na
 ```
 
 `new` also takes `--private` (the default for `--github`) and `--family=false` (alias `-o`) to skip the family hub link. Templates come from `$XDG_CONFIG_HOME/matomeru/templates` (else `~/.config/matomeru/templates`): a directory or a `.tar.gz`, whose `*.tmpl` files render with Go `text/template` and lose the suffix.
+
+`--github` creates the repository under `$O_PROJ_GITHUB_OWNER` (default `ofamtools`), and a template's `{{.Module}}` is `$O_PROJ_MODULE_PREFIX` followed by NAME (default `ofam.dev/`, so `ofam.dev/NAME`).
 
 The demo above, as text: a throwaway home with three repositories under `~/proj`, two of them linked from `~/hub/o`, none recorded yet (`/private/tmp/oproj.uK3x` is the demo's temporary directory):
 
@@ -119,7 +121,7 @@ tea-shop     adopted  ~/proj/tea-shop     none     yes
 `~/hub/repos.json` (`$O_PROJ_MANIFEST`), a JSON array sorted by name:
 
 ```json
-[{ "name": "oden", "url": "git@github.com:unixsuperhero/oden.git", "path": "~/proj/oden", "branch": "main", "origin": "adopted" }]
+[{ "name": "oden", "url": "git@github.com:ofamtools/oden.git", "path": "~/proj/oden", "branch": "main", "origin": "adopted" }]
 ```
 
 `path` keeps `~` and is expanded per machine; `origin` is `o-proj` (made by `new`) or `adopted`. `list` adds the expanded `dir`. The manifest is written only by `new`, `adopt` and `seed`, and they never rewrite an entry.
