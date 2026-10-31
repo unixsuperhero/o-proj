@@ -10,7 +10,9 @@ import (
 
 // Every verb o-proj defines declares its history kind (Operation.HistoryKind)
 // rather than leaving it to ochazuke's default, and the catalog's history is
-// that kind. A new verb without one fails here.
+// that kind. A new verb without one fails here. The framework's own verbs (the
+// catalog's builtin) are left to ochazuke, so a library release that adds some
+// does not change the count.
 func TestEveryVerbDeclaresItsHistory(t *testing.T) {
 	tl, out, _ := tool(t)
 	if err := tl.Main([]string{"catalog"}); err != nil {
@@ -25,12 +27,11 @@ func TestEveryVerbDeclaresItsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	ops := sh.Runtime.Operations
-	framework := ochazuke.NewRuntime().Operations
 	n := 0
 	for _, noun := range doc.Nouns {
 		for _, v := range noun.Verbs {
 			key := noun.Name + "." + v.Name
-			if _, ok := framework[key]; ok {
+			if v.Builtin {
 				continue
 			}
 			n++
